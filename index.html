@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TestFlow – Tesztelés Segítő</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <link rel="stylesheet" href="style.css" />
+  <!-- Dark mode flash megelőzés: témát azonnal alkalmazza CSS betöltés előtt -->
+  <script>
+    (function(){
+      var t = localStorage.getItem('tf_theme') ||
+        (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
+</head>
+<body>
+<div id="app-wrapper">
+
+  <!-- Navbar -->
+  <nav class="app-navbar">
+    <div class="navbar-left">
+      <a class="brand" id="navbar-brand" href="#/">
+        <div class="brand-icon"><i class="fa-solid fa-flask-vial"></i></div>
+        <div class="brand-text">
+          <span class="brand-name">TestFlow</span>
+          <span class="brand-tagline">Tesztelés Segítő</span>
+        </div>
+      </a>
+      <button class="theme-toggle" id="theme-toggle" aria-label="Téma váltása" title="Világos/sötét mód">
+        <i class="fa-solid fa-moon" id="theme-icon"></i>
+      </button>
+    </div>
+    <div class="navbar-right">
+      <span id="navbar-file-indicator" class="file-indicator hidden"></span>
+      <button class="navbar-search-btn" id="navbar-search-btn" title="Keresés (Ctrl+K)" aria-label="Keresés">
+        <i class="fa-solid fa-magnifying-glass"></i>
+        <span>Keresés</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+      <div id="navbar-actions"></div>
+    </div>
+  </nav>
+
+  <!-- SPA view container -->
+  <main id="app-view" class="page-container" aria-live="polite"></main>
+
+  <!-- Testing Overlay -->
+  <div id="testing-overlay" role="dialog" aria-modal="true">
+    <div class="testing-shell">
+      <div class="testing-header">
+        <div class="testing-header-title" id="testing-suite-title">Tesztelés</div>
+        <div class="testing-progress-label" id="testing-step-label">0 / 0</div>
+      </div>
+      <div class="testing-progress-track">
+        <div class="testing-progress-fill" id="testing-progress-fill" style="width:0%"></div>
+      </div>
+      <div class="testing-card">
+        <div class="testing-card-top" id="testing-card-top"></div>
+        <div class="testing-card-bottom" id="testing-card-bottom"></div>
+      </div>
+      <div class="testing-nav" id="testing-nav"></div>
+    </div>
+  </div>
+
+  <!-- ===== Modals ===== -->
+
+  <div class="modal-overlay" id="modal-suite" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-suite-title">Új Teszteset Halmaz</h2>
+        <button class="modal-close-btn" data-close="modal-suite" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="suite-name">Halmaz neve <span>*</span></label>
+          <input class="form-input" id="suite-name" placeholder="pl. Bejelentkezés funkció tesztek" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="suite-notes">Megjegyzés</label>
+          <textarea class="form-textarea" id="suite-notes" placeholder="Opcionális leírás, linkek, kontextus..."></textarea>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="suite-status">Folyamatstátusz</label>
+            <select class="form-select" id="suite-status">
+              <option value="">– Nincs –</option>
+              <option value="Új">Új</option>
+              <option value="Tervezés alatt">Tervezés alatt</option>
+              <option value="Tesztelésre kész">Tesztelésre kész</option>
+              <option value="Tesztelés alatt">Tesztelés alatt</option>
+              <option value="Tesztelés befejezve">Tesztelés befejezve</option>
+              <option value="Clickupba felvéve">Clickupba felvéve</option>
+              <option value="Kész">Kész</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="suite-clickup-id">ClickUp ID <span class="form-hint">(opcionális)</span></label>
+            <input class="form-input mono" id="suite-clickup-id" placeholder="DXP-123" />
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-suite">Mégse</button>
+        <button class="btn btn-primary" id="btn-save-suite"><i class="fa-solid fa-floppy-disk"></i> Mentés</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="modal-testcase" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="modal-tc-title">Új Teszteset</h2>
+        <button class="modal-close-btn" data-close="modal-testcase" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="tc-id">ID</label>
+            <input class="form-input mono" id="tc-id" placeholder="automatikusan generálódik" title="Automatikusan generált, de felülírható" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="tc-evaluation">Értékelés</label>
+            <select class="form-select" id="tc-evaluation">
+              <option value="">– Nincs –</option>
+              <option value="Sikeres">Sikeres</option>
+              <option value="Sikertelen">Sikertelen</option>
+              <option value="Megbeszélésre vár">Megbeszélésre vár</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="tc-name">Teszteset neve <span>*</span></label>
+          <input class="form-input" id="tc-name" placeholder="pl. Sikeres bejelentkezés érvényes adatokkal" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="tc-steps">Lépések</label>
+          <textarea class="form-textarea" id="tc-steps" rows="5" placeholder="1. Nyisd meg a bejelentkezési oldalt&#10;2. Add meg a felhasználónevet&#10;3. Kattints a Belépés gombra"></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="tc-expected">Elvárt eredmény</label>
+          <textarea class="form-textarea" id="tc-expected" placeholder="A felhasználó sikeresen bejelentkezik és a főoldalra kerül."></textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="tc-actual">Kapott eredmény</label>
+          <textarea class="form-textarea" id="tc-actual" placeholder="(teszteléskor töltendő, de kézzel is megadható)"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-testcase">Mégse</button>
+        <button class="btn btn-primary" id="btn-save-tc"><i class="fa-solid fa-floppy-disk"></i> Mentés</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Format Helper Modal -->
+  <!-- Excel import modal -->
+  <div class="modal-overlay" id="modal-excel-import" role="dialog" aria-modal="true">
+    <div class="modal-box" style="max-width:580px;">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-file-excel accent-icon"></i> Excel import</h2>
+        <button class="modal-close-btn" data-close="modal-excel-import" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Válassz .xlsx fájlt <span>*</span></label>
+          <label class="file-pick-btn" for="import-excel-input">
+            <i class="fa-solid fa-file-excel"></i>
+            <span id="excel-import-file-name">Fájl kiválasztása…</span>
+          </label>
+          <input type="file" id="import-excel-input" accept=".xlsx,.xls" class="hidden" />
+        </div>
+        <div id="excel-import-preview" class="hidden" style="margin-bottom:.75rem;"></div>
+        <details class="format-details">
+          <summary class="format-details-summary">
+            <i class="fa-solid fa-circle-question"></i> Formátum útmutató
+          </summary>
+          <div class="format-details-body">
+            <div class="format-table-wrap" style="margin-bottom:.75rem;">
+              <table class="format-table">
+                <thead><tr><th>Oszlop</th><th>Alternatív</th><th>Kötelező?</th><th>Leírás</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="code-chip">ID</span></td><td><span class="code-chip">id</span></td><td><span class="col-required yes">Ajánlott</span></td><td>Egyedi azonosító. Ha hiányzik, auto-generálódik.</td></tr>
+                  <tr><td><span class="code-chip">Név</span></td><td><span class="code-chip">Name</span></td><td><span class="col-required yes">Kötelező</span></td><td>A teszteset neve.</td></tr>
+                  <tr><td><span class="code-chip">Lépések</span></td><td><span class="code-chip">Steps</span></td><td><span class="col-required no">Opcionális</span></td><td>Sortöréssel elválasztva.</td></tr>
+                  <tr><td><span class="code-chip">Elvárt eredmény</span></td><td><span class="code-chip">Expected Result</span></td><td><span class="col-required no">Opcionális</span></td><td>Elvárt viselkedés.</td></tr>
+                  <tr><td><span class="code-chip">Kapott eredmény</span></td><td><span class="code-chip">Actual Result</span></td><td><span class="col-required no">Opcionális</span></td><td>Tényleges eredmény.</td></tr>
+                  <tr><td><span class="code-chip">Értékelés</span></td><td><span class="code-chip">Evaluation</span></td><td><span class="col-required no">Opcionális</span></td><td><span class="code-chip">Sikeres</span> / <span class="code-chip">Pass</span>, <span class="code-chip">Sikertelen</span> / <span class="code-chip">Fail</span>, <span class="code-chip">Megbeszélésre vár</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="info-box" style="margin-bottom:.5rem;"><i class="fa-solid fa-circle-info"></i><span>Egyező ID esetén az import <strong>felülírja</strong> a meglévő tesztesetet.</span></div>
+            <div class="warn-box"><i class="fa-solid fa-triangle-exclamation"></i><span>Az első sor fejléc legyen. Fájl formátum: <strong>.xlsx</strong></span></div>
+          </div>
+        </details>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-excel-import">Mégse</button>
+        <button class="btn btn-secondary" id="btn-excel-import-template"><i class="fa-solid fa-download"></i> Sablon</button>
+        <button class="btn btn-primary" id="btn-do-excel-import" disabled><i class="fa-solid fa-file-import"></i> Importálás</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Import Suite Modal -->
+  <div class="modal-overlay" id="modal-import-suite" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-file-import accent-icon"></i> Teljes halmaz importálása</h2>
+        <button class="modal-close-btn" data-close="modal-import-suite" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="info-box">
+          <i class="fa-solid fa-circle-info"></i>
+          <span>Ez a funkció egy <strong>új halmazt hoz létre</strong> a fájlban tárolt metaadatokkal és tesztesetekkel. Az innen exportált <code>.xlsx</code> fájlok azonnal visszaimportálhatók.</span>
+        </div>
+        <div class="form-group" style="margin-top:1rem;">
+          <label class="form-label">Válassz exportált halmaz fájlt (.xlsx) <span>*</span></label>
+          <label class="file-pick-btn" for="import-suite-file">
+            <i class="fa-solid fa-folder-open"></i>
+            <span id="import-suite-file-name">Fájl kiválasztása…</span>
+          </label>
+          <input type="file" id="import-suite-file" accept=".xlsx" class="hidden" />
+        </div>
+        <div id="import-suite-preview" class="hidden"></div>
+
+        <details class="format-details" style="margin-top:.75rem;">
+          <summary class="format-details-summary">
+            <i class="fa-solid fa-circle-question"></i> Formátum útmutató
+          </summary>
+          <div class="format-details-body">
+            <p class="format-note">A fájlnak két munkalapot kell tartalmaznia:</p>
+            <div class="format-table-wrap" style="margin-bottom:.75rem;">
+              <table class="format-table">
+                <thead><tr><th colspan="2">1. lap – „Suite Info" (halmaz adatai)</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="code-chip">Név</span></td><td>A halmaz neve (kötelező)</td></tr>
+                  <tr><td><span class="code-chip">Megjegyzés</span></td><td>Opcionális leírás</td></tr>
+                  <tr><td><span class="code-chip">Státusz</span></td><td>Folyamatstátusz szövege</td></tr>
+                  <tr><td><span class="code-chip">Befejezett</span></td><td><span class="code-chip">igen</span> vagy <span class="code-chip">nem</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="format-table-wrap" style="margin-bottom:.75rem;">
+              <table class="format-table">
+                <thead><tr><th colspan="2">2. lap – „Tesztesetek" (oszlopfejlécek)</th></tr></thead>
+                <tbody>
+                  <tr><td><span class="code-chip">ID</span></td><td><span class="col-required yes">Ajánlott</span></td></tr>
+                  <tr><td><span class="code-chip">Név</span></td><td><span class="col-required yes">Kötelező</span></td></tr>
+                  <tr><td><span class="code-chip">Lépések</span></td><td><span class="col-required no">Opcionális</span></td></tr>
+                  <tr><td><span class="code-chip">Elvárt eredmény</span></td><td><span class="col-required no">Opcionális</span></td></tr>
+                  <tr><td><span class="code-chip">Kapott eredmény</span></td><td><span class="col-required no">Opcionális</span></td></tr>
+                  <tr><td><span class="code-chip">Értékelés</span></td><td><span class="col-required no">Opcionális</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="warn-box" style="margin:0;">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>Az importálás <strong>új halmazt</strong> hoz létre – nem írja felül a meglévőt. Csak a <strong>Teljes halmaz exportálása (.xlsx)</strong> gombbal létrehozott fájlok importálhatók ide.</span>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-import-suite">Mégse</button>
+        <button class="btn btn-primary" id="btn-do-import-suite" disabled><i class="fa-solid fa-file-import"></i> Importálás</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keresés modal -->
+  <div class="modal-overlay search-modal-overlay" id="modal-search" role="dialog" aria-modal="true" aria-label="Keresés">
+    <div class="modal-box search-modal-box">
+      <div class="search-modal-input-wrap">
+        <i class="fa-solid fa-magnifying-glass search-modal-icon"></i>
+        <input
+          class="search-modal-input"
+          id="search-input"
+          type="text"
+          placeholder="Keresés halmazok és tesztesetek között..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button class="modal-close-btn" data-close="modal-search" aria-label="Bezárás" style="flex-shrink:0;">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div class="search-modal-body" id="search-results"></div>
+      <div class="search-modal-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> navigálás</span>
+        <span><kbd>Enter</kbd> megnyitás</span>
+        <span><kbd>Esc</kbd> bezárás</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Teszteset megtekintés modal -->
+  <div class="modal-overlay" id="modal-view-tc" role="dialog" aria-modal="true">
+    <div class="modal-box" style="max-width:600px;">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-eye" style="color:var(--blue);margin-right:.4rem;"></i> Teszteset megtekintése</h2>
+        <button class="modal-close-btn" data-close="modal-view-tc" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body" id="view-tc-modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-view-tc">Bezárás</button>
+        <button class="btn btn-light" id="btn-view-tc-edit"><i class="fa-solid fa-pen"></i> Szerkesztés</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Megbeszélésre vár modal -->
+  <div class="modal-overlay" id="modal-discuss" role="dialog" aria-modal="true">
+    <div class="modal-box" style="max-width:640px;">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-comments" style="color:var(--amber);margin-right:.4rem;"></i> Megbeszélésre vár</h2>
+        <button class="modal-close-btn" data-close="modal-discuss" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body" id="discuss-modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-discuss">Bezárás</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Szűrés sidepanel -->
+  <div class="sidepanel-overlay" id="sidepanel-filter">
+    <div class="sidepanel">
+      <div class="sidepanel-header">
+        <h2><i class="fa-solid fa-filter accent-icon"></i> Szűrési feltételek</h2>
+        <button class="modal-close-btn" id="btn-close-filter-panel" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="sidepanel-body">
+        <div class="filter-section">
+          <div class="filter-section-label">Értékelés</div>
+          <div class="filter-check-group" id="fp-eval-checks">
+            <label class="filter-check"><input type="checkbox" value="Sikeres" /> <span class="eval-badge success"><i class="fa-solid fa-circle-check"></i> Sikeres</span></label>
+            <label class="filter-check"><input type="checkbox" value="Sikertelen" /> <span class="eval-badge fail"><i class="fa-solid fa-circle-xmark"></i> Sikertelen</span></label>
+            <label class="filter-check"><input type="checkbox" value="Megbeszélésre vár" /> <span class="eval-badge discuss"><i class="fa-solid fa-comments"></i> Megbeszélésre vár</span></label>
+            <label class="filter-check"><input type="checkbox" value="pending" /> <span class="eval-badge pending"><i class="fa-regular fa-clock"></i> Nincs értékelés</span></label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <div class="filter-section-label">Tartalom</div>
+          <div class="filter-check-group">
+            <label class="filter-check"><input type="checkbox" id="fp-has-steps" /> Van lépés megadva</label>
+            <label class="filter-check"><input type="checkbox" id="fp-has-expected" /> Van elvárt eredmény</label>
+            <label class="filter-check"><input type="checkbox" id="fp-has-actual" /> Van kapott eredmény</label>
+            <label class="filter-check"><input type="checkbox" id="fp-no-eval" /> Hiányzik az értékelés</label>
+          </div>
+        </div>
+        <div class="filter-section">
+          <div class="filter-section-label">Szabad szöveges keresés</div>
+          <input class="form-input" id="fp-text-search" placeholder="Keresés ID-ban, névben, lépésekben…" />
+        </div>
+      </div>
+      <div class="sidepanel-footer">
+        <button class="btn btn-ghost" id="btn-filter-reset"><i class="fa-solid fa-rotate-left"></i> Visszaállítás</button>
+        <button class="btn btn-primary" id="btn-filter-apply"><i class="fa-solid fa-check"></i> Szűrés alkalmazása</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ClickUp tétel generátor modal -->
+  <div class="modal-overlay" id="modal-clickup-gen" role="dialog" aria-modal="true">
+    <div class="modal-box" style="max-width:660px;">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-wand-magic-sparkles accent-icon"></i> ClickUp tétel generátor</h2>
+        <button class="modal-close-btn" data-close="modal-clickup-gen" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="info-box" style="margin-bottom:1rem;">
+          <i class="fa-solid fa-circle-info"></i>
+          <span>A sikertelen tesztesetek alapján egy ClickUp-kompatibilis hibajegy sablont generál. Másold ki a tartalmát közvetlenül a ClickUp description mezőjébe.</span>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label" for="cu-env-browser">Böngésző</label>
+            <input class="form-input" id="cu-env-browser" placeholder="pl. Chrome 124, Firefox" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cu-env-system">Rendszer</label>
+            <input class="form-input" id="cu-env-system" placeholder="pl. Core Master, Staging" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cu-env-client">Ügyfél</label>
+            <input class="form-input" id="cu-env-client" placeholder="pl. Csokoládégyár Kft." />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="cu-env-user">Felhasználó</label>
+            <input class="form-input" id="cu-env-user" placeholder="pl. tester@example.com" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cu-tc-select">Teszteset(ek) kiválasztása</label>
+          <select class="form-select" id="cu-tc-select" multiple style="min-height:110px;">
+          </select>
+          <p style="font-size:.75rem;color:var(--text-muted);margin-top:.3rem;">Ctrl+kattintás több kijelöléséhez</p>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="cu-extra-notes">További megjegyzés (opcionális)</label>
+          <textarea class="form-textarea" id="cu-extra-notes" placeholder="Egyéb megfigyelések, kontextus…" rows="3"></textarea>
+        </div>
+        <div id="cu-preview-wrap" class="hidden">
+          <div class="filter-section-label" style="margin-bottom:.4rem;">Előnézet</div>
+          <pre class="cu-preview-pre" id="cu-preview"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-clickup-gen">Bezárás</button>
+        <button class="btn btn-light" id="btn-cu-preview"><i class="fa-solid fa-eye"></i> Előnézet</button>
+        <button class="btn btn-primary" id="btn-cu-copy"><i class="fa-solid fa-copy"></i> Másolás vágólapra</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- .md export modal -->
+  <div class="modal-overlay" id="modal-md-export" role="dialog" aria-modal="true">
+    <div class="modal-box" style="max-width:660px;">
+      <div class="modal-header">
+        <h2><i class="fa-solid fa-file-code accent-icon"></i> Sikertelen tesztek exportálása (.md)</h2>
+        <button class="modal-close-btn" data-close="modal-md-export" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label" for="md-title">Dokumentum cím</label>
+          <input class="form-input" id="md-title" placeholder="pl. Sprint 42 – Sikertelen tesztesetek" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="md-scope">Hatókör / Megjegyzés (opcionális)</label>
+          <input class="form-input" id="md-scope" placeholder="pl. Bejelentkezés modul, 2024-01-15" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Szűrés exporthoz</label>
+          <div class="filter-check-group" style="flex-direction:row;flex-wrap:wrap;gap:.5rem;">
+            <label class="filter-check"><input type="checkbox" id="md-inc-sikertelen" checked /> Sikertelen</label>
+            <label class="filter-check"><input type="checkbox" id="md-inc-discuss" /> Megbeszélésre vár</label>
+            <label class="filter-check"><input type="checkbox" id="md-inc-no-eval" /> Nincs értékelés</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="md-template">Sablon</label>
+          <select class="form-select" id="md-template">
+            <option value="standard">Standard – ID, Név, Lépések, Elvárt, Kapott</option>
+            <option value="compact">Kompakt – ID, Név, Kapott eredmény</option>
+            <option value="clickup">ClickUp-stílusú – részletes szekciókkal</option>
+          </select>
+        </div>
+        <div id="md-preview-wrap" class="hidden">
+          <div class="filter-section-label" style="margin-bottom:.4rem;">Előnézet</div>
+          <pre class="cu-preview-pre" id="md-preview"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modal-md-export">Bezárás</button>
+        <button class="btn btn-light" id="btn-md-preview"><i class="fa-solid fa-eye"></i> Előnézet</button>
+        <button class="btn btn-primary" id="btn-md-download"><i class="fa-solid fa-download"></i> Letöltés (.md)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Visszaállítás megerősítő modal -->
+  <div class="modal-overlay confirm-dialog" id="modal-revert" role="dialog" aria-modal="true">
+    <div class="modal-box" style="max-width:420px;text-align:center;">
+      <div class="modal-header" style="justify-content:center;border-bottom:none;padding-bottom:.5rem;">
+        <h2 style="color:var(--red);"><i class="fa-solid fa-clock-rotate-left"></i> Halmaz visszaállítása</h2>
+      </div>
+      <div class="modal-body" style="text-align:center;">
+        <p style="margin-bottom:1.25rem;color:var(--text-muted);font-size:.92rem;">
+          Ez a művelet <strong>törli az összes értékelést, kapott eredményt és mentett folytatási pontot</strong>.<br>
+          A tesztesetek definíciói megmaradnak, csak a tesztelési eredmények törlődnek.<br><br>
+          A visszaállításhoz írd be: <strong>süti</strong>
+        </p>
+        <input class="form-input"
+          id="revert-confirm-input"
+          placeholder="süti"
+          autocomplete="off"
+          style="text-align:center;font-size:1rem;letter-spacing:.1em;max-width:200px;margin:0 auto;" />
+      </div>
+      <div class="modal-footer" style="justify-content:center;">
+        <button class="btn btn-ghost" data-close="modal-revert">Mégse</button>
+        <button class="btn btn-danger" id="btn-revert-confirm" disabled>
+          <i class="fa-solid fa-clock-rotate-left"></i> Visszaállítás
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Dialog -->
+  <div class="modal-overlay confirm-dialog" id="modal-confirm" role="dialog" aria-modal="true">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h2 id="confirm-title">Megerősítés</h2>
+        <button class="modal-close-btn" data-close="modal-confirm" aria-label="Bezárás"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirm-message"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-confirm-cancel" data-close="modal-confirm">Mégse</button>
+        <button class="btn btn-danger" id="btn-confirm-ok">Törlés</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch műveletek sáv -->
+  <div class="batch-bar hidden" id="batch-bar">
+    <div class="batch-bar-inner">
+      <div class="batch-bar-left">
+        <span class="batch-bar-count" id="batch-bar-count">0 kijelölve</span>
+        <button class="btn btn-light btn-sm" id="batch-select-all">Mind kijelöl</button>
+        <button class="btn btn-ghost btn-sm" id="batch-deselect"><i class="fa-solid fa-xmark"></i> Kijelölés törlése</button>
+      </div>
+      <div class="batch-bar-right">
+        <div class="dropdown-wrap">
+          <button class="btn btn-light btn-sm" id="batch-eval-toggle">
+            <i class="fa-solid fa-star-half-stroke"></i> Értékelés beállítása <i class="fa-solid fa-chevron-down" style="font-size:.6rem;"></i>
+          </button>
+          <div class="dropdown-menu-custom hidden" id="batch-eval-menu">
+            <button class="dropdown-item-custom" data-batch-eval="Sikeres"><span class="eval-badge success"><i class="fa-solid fa-circle-check"></i> Sikeres</span></button>
+            <button class="dropdown-item-custom" data-batch-eval="Sikertelen"><span class="eval-badge fail"><i class="fa-solid fa-circle-xmark"></i> Sikertelen</span></button>
+            <button class="dropdown-item-custom" data-batch-eval="Megbeszélésre vár"><span class="eval-badge discuss"><i class="fa-solid fa-comments"></i> Megbeszélésre vár</span></button>
+            <div class="dropdown-divider-custom"></div>
+            <button class="dropdown-item-custom" data-batch-eval=""><span class="eval-badge pending"><i class="fa-solid fa-xmark"></i> Értékelés törlése</span></button>
+          </div>
+        </div>
+        <button class="btn btn-light btn-sm" id="batch-export-xlsx">
+          <i class="fa-solid fa-table"></i> Exportálás (.xlsx)
+        </button>
+        <button class="btn btn-danger btn-sm" id="batch-delete">
+          <i class="fa-solid fa-trash"></i> Törlés
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" aria-live="assertive"></div>
+</div>
+
+<!--
+  A modulok klasszikus <script> tagekkel töltődnek be (nem ES module),
+  hogy az alkalmazás file:// protokollról, dupla kattintással is fusson.
+  Minden modul a globális TF (TestFlow) névtérbe regisztrálja magát.
+-->
+<script src="js/storage.js"></script>
+<script src="js/idrenumber.js"></script>
+<script src="js/theme.js"></script>
+<script src="js/undo.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/excel.js"></script>
+<script src="js/search.js"></script>
+<script src="js/views/home.js"></script>
+<script src="js/views/suite.js"></script>
+<script src="js/views/testing.js"></script>
+<script src="js/filepicker.js"></script>
+<script src="js/router.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
