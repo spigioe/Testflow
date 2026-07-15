@@ -1,0 +1,46 @@
+version: "3.9"
+
+services:
+
+  # ── C# ASP.NET Core backend ──────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: testflow-backend
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - Database__Path=/data/testflow.db
+    volumes:
+      - testflow-data:/data        # SQLite fájl persistálása
+    networks:
+      - testflow-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Nginx + vanilla JS frontend ──────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: testflow-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"                    # http://localhost
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - testflow-net
+
+volumes:
+  testflow-data:
+    driver: local
+
+networks:
+  testflow-net:
+    driver: bridge

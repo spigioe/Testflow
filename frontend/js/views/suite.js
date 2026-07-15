@@ -119,6 +119,10 @@ TF.Views.Suite = (() => {
               <button class="dropdown-item-custom" data-action="export-tc-csv"><i class="fa-solid fa-file-csv"></i> Tesztesetek (.csv)</button>
               ${(stats.f + stats.d) > 0 ? `<button class="dropdown-item-custom" data-action="open-md-export"><i class="fa-solid fa-file-code"></i> Sikertelen tesztek (.md)</button>` : ''}
               <div class="dropdown-divider-custom"></div>
+              <div class="dropdown-label-custom">HTML Report</div>
+              <button class="dropdown-item-custom" data-action="export-html-pre"><i class="fa-solid fa-file-code"></i> Futtatás előtti report (.html)</button>
+              <button class="dropdown-item-custom" data-action="export-html-post"><i class="fa-solid fa-file-code"></i> Futtatás utáni report (.html)</button>
+              <div class="dropdown-divider-custom"></div>
               <div class="dropdown-label-custom">Teljes halmaz</div>
               <button class="dropdown-item-custom" data-action="export-suite-xlsx"><i class="fa-solid fa-layer-group"></i> Teljes halmaz (.xlsx) – újraimportálható</button>
             </div>
@@ -161,6 +165,9 @@ TF.Views.Suite = (() => {
     // Undo history törlése új suite megnyitásakor
     TF.Undo.clear();
 
+    // Oszlop-átméretezés inicializálása (a táblázat DOM-ban van)
+    requestAnimationFrame(() => TF.ColResize.init(suiteId));
+
     // ---- Sticky kontextuális sáv (toolbar eltűnésekor jelenik meg) ----
     document.getElementById('sticky-bar')?.remove();
 
@@ -191,6 +198,10 @@ TF.Views.Suite = (() => {
                 <button class="dropdown-item-custom" id="sbar-exp-tc-xlsx"><i class="fa-solid fa-table"></i> Tesztesetek (.xlsx)</button>
                 <button class="dropdown-item-custom" id="sbar-exp-tc-csv"><i class="fa-solid fa-file-csv"></i> Tesztesetek (.csv)</button>
                 <div class="dropdown-divider-custom"></div>
+                <div class="dropdown-label-custom">HTML Report</div>
+                <button class="dropdown-item-custom" id="sbar-exp-html-pre"><i class="fa-solid fa-file-code"></i> Futtatás előtti (.html)</button>
+                <button class="dropdown-item-custom" id="sbar-exp-html-post"><i class="fa-solid fa-file-code"></i> Futtatás utáni (.html)</button>
+                <div class="dropdown-divider-custom"></div>
                 <div class="dropdown-label-custom">Teljes halmaz</div>
                 <button class="dropdown-item-custom" id="sbar-exp-suite"><i class="fa-solid fa-layer-group"></i> Teljes halmaz (.xlsx)</button>
               </div>
@@ -217,6 +228,8 @@ TF.Views.Suite = (() => {
       bar.querySelector('#sbar-exp-tc-xlsx').addEventListener('click', () => { sbarExportMenu.classList.remove('is-open'); TF.Excel.exportTestCasesXlsx(currentSuiteId); });
       bar.querySelector('#sbar-exp-tc-csv').addEventListener('click', () => { sbarExportMenu.classList.remove('is-open'); TF.Excel.exportTestCasesCsv(currentSuiteId); });
       bar.querySelector('#sbar-exp-suite').addEventListener('click', () => { sbarExportMenu.classList.remove('is-open'); TF.Excel.exportFullSuiteXlsx(currentSuiteId); });
+      bar.querySelector('#sbar-exp-html-pre')?.addEventListener('click', () => { sbarExportMenu.classList.remove('is-open'); TF.HtmlReport.exportHtml(currentSuiteId, 'pre'); });
+      bar.querySelector('#sbar-exp-html-post')?.addEventListener('click', () => { sbarExportMenu.classList.remove('is-open'); TF.HtmlReport.exportHtml(currentSuiteId, 'post'); });
       document.addEventListener('click', () => sbarExportMenu?.classList.remove('is-open'));
 
       // IntersectionObserver: a toolbar eltűnésekor mutatja a sávot
@@ -244,7 +257,12 @@ TF.Views.Suite = (() => {
             <span class="tc-id-badge">${esc(tc.id)}</span>
           </div>
         </td>
-        <td><div class="tc-name">${esc(tc.name)}</div></td>
+        <td>
+          <div class="tc-name-wrap">
+            <div class="tc-name">${esc(tc.name)}</div>
+            ${tc.attachments?.length ? `<span class="tc-att-badge" title="${tc.attachments.length} csatolmány"><i class="fa-solid fa-paperclip"></i> ${tc.attachments.length}</span>` : ''}
+          </div>
+        </td>
         <td>${stepsHtml(tc.steps)}</td>
         <td class="tc-cell-clip">${tc.expectedResult ? esc(tc.expectedResult) : '<span class="text-muted">–</span>'}</td>
         <td class="tc-cell-clip">${tc.actualResult ? esc(tc.actualResult) : '<span class="text-muted">–</span>'}</td>
@@ -361,6 +379,8 @@ TF.Views.Suite = (() => {
         case 'export-tc-xlsx':    closeExportMenu(); return TF.Excel.exportTestCasesXlsx(currentSuiteId);
         case 'export-tc-csv':     closeExportMenu(); return TF.Excel.exportTestCasesCsv(currentSuiteId);
         case 'export-suite-xlsx': closeExportMenu(); return TF.Excel.exportFullSuiteXlsx(currentSuiteId);
+        case 'export-html-pre':   closeExportMenu(); return TF.HtmlReport.exportHtml(currentSuiteId, 'pre');
+        case 'export-html-post':  closeExportMenu(); return TF.HtmlReport.exportHtml(currentSuiteId, 'post');
       }
     });
 

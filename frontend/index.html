@@ -5,6 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TestFlow – Tesztelés Segítő</title>
 
+  <!--
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  TestFlow application metadata                                   │
+    │  Format: semver (MAJOR.MINOR.PATCH)                              │
+    │  MAJOR: architectural / breaking changes                         │
+    │  MINOR: new features or significant UI changes                   │
+    │  PATCH: bug fixes, copy, style tweaks                            │
+    └─────────────────────────────────────────────────────────────────┘
+  -->
+  <meta name="application-name"    content="TestFlow" />
+  <meta name="version"             content="0.8.1" />
+  <meta name="release-date"        content="2026-07-13" />
+  <meta name="description"         content="QA tesztelést segítő eszköz – teszteset halmazok kezelése, tesztelési workflow és riportolás." />
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
@@ -29,7 +43,7 @@
       <a class="brand" id="navbar-brand" href="#/">
         <div class="brand-icon"><i class="fa-solid fa-flask-vial"></i></div>
         <div class="brand-text">
-          <span class="brand-name">TestFlow</span>
+          <span class="brand-name">TestFlow <span class="brand-version">v0.8.1</span></span>
           <span class="brand-tagline">Tesztelés Segítő</span>
         </div>
       </a>
@@ -555,6 +569,9 @@
 <script src="js/undo.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/excel.js"></script>
+<script src="js/htmlreport.js"></script>
+<script src="js/attachments.js"></script>
+<script src="js/colresize.js"></script>
 <script src="js/search.js"></script>
 <script src="js/views/home.js"></script>
 <script src="js/views/suite.js"></script>

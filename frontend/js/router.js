@@ -29,7 +29,7 @@ TF.Router = (() => {
     document.getElementById('undo-float-btn')?.classList.add('hidden');
 
     // Nincs adatfájl → fájlválasztó képernyő, útvonaltól függetlenül
-    if (!TF.Storage.isReady()) {
+    if (false) { // REST módban mindig kész
       TF.FilePicker.render(container);
       return;
     }

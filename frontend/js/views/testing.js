@@ -46,8 +46,16 @@ TF.Views.Testing = (() => {
       for (const tc of state.cases) {
         state.results[tc.id] = {
           actualResult: tc.actualResult || '',
-          evaluation:   tc.evaluation   || ''
+          evaluation:   tc.evaluation   || '',
+          attachments:  tc.attachments  || []
         };
+      }
+    } else {
+      // Folytatásnál is biztosítjuk az attachments mezőt
+      for (const tc of state.cases) {
+        if (state.results[tc.id] && !state.results[tc.id].attachments) {
+          state.results[tc.id].attachments = tc.attachments || [];
+        }
       }
     }
 
@@ -89,7 +97,11 @@ TF.Views.Testing = (() => {
 
     for (const tc of suite.testCases) {
       const r = state.results[tc.id];
-      if (r) { tc.actualResult = r.actualResult; tc.evaluation = r.evaluation; }
+      if (r) {
+        tc.actualResult  = r.actualResult;
+        tc.evaluation    = r.evaluation;
+        tc.attachments   = r.attachments || [];
+      }
     }
 
     // Folytatási pont elmentése
@@ -119,7 +131,11 @@ TF.Views.Testing = (() => {
     }
     for (const tc of suite.testCases) {
       const r = state.results[tc.id];
-      if (r) { tc.actualResult = r.actualResult; tc.evaluation = r.evaluation; }
+      if (r) {
+        tc.actualResult  = r.actualResult;
+        tc.evaluation    = r.evaluation;
+        tc.attachments   = r.attachments || [];
+      }
     }
     suite.isCompleted = true;
     suite.status = 'Tesztelés befejezve';
@@ -164,21 +180,48 @@ TF.Views.Testing = (() => {
         <div class="testing-field-value text-muted">Ehhez a tesztesethez nincsenek rögzített lépések vagy elvárt eredmény.</div>
       </div>` : ''}`;
 
-    const res = state.results[tc.id] || { actualResult: '', evaluation: '' };
+    const res = state.results[tc.id] || { actualResult: '', evaluation: '', attachments: [] };
 
     document.getElementById('testing-card-bottom').innerHTML = `
       <div class="form-group">
         <label class="form-label" for="t-actual">Kapott eredmény</label>
         <textarea class="form-textarea" id="t-actual" placeholder="Írd le, mi történt ténylegesen...">${esc(res.actualResult)}</textarea>
       </div>
-      <div class="form-group" style="margin-bottom:0;">
+      <div class="form-group">
         <label class="form-label">Értékelés</label>
         <div class="eval-buttons">
           <button class="eval-btn ${res.evaluation === 'Sikeres' ? 'selected-success' : ''}" data-eval="Sikeres"><i class="fa-solid fa-circle-check"></i> Sikeres</button>
           <button class="eval-btn ${res.evaluation === 'Sikertelen' ? 'selected-fail' : ''}" data-eval="Sikertelen"><i class="fa-solid fa-circle-xmark"></i> Sikertelen</button>
           <button class="eval-btn ${res.evaluation === 'Megbeszélésre vár' ? 'selected-discuss' : ''}" data-eval="Megbeszélésre vár"><i class="fa-solid fa-comments"></i> Megbeszélésre vár</button>
         </div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        ${TF.Attachments.renderAttachmentsSection(tc.id, res.attachments)}
       </div>`;
+
+    // Csatolmány – kép hozzáadása gomb
+    document.getElementById(`btn-att-add-${tc.id}`)?.addEventListener('click', async () => {
+      const newAtts = await TF.Attachments.pickImages();
+      if (!newAtts.length) return;
+      // captureCurrent előbb, hogy az actual+eval ne vesszen el
+      captureCurrent();
+      const cur = state.results[tc.id] || { actualResult: '', evaluation: '', attachments: [] };
+      cur.attachments = [...(cur.attachments || []), ...newAtts];
+      state.results[tc.id] = cur;
+      renderStep();
+    });
+
+    // Csatolmány – eltávolítás
+    document.getElementById(`att-section-${tc.id}`)?.addEventListener('click', e => {
+      const btn = e.target.closest('.att-remove-btn');
+      if (!btn) return;
+      captureCurrent();
+      const idx = parseInt(btn.dataset.attIdx, 10);
+      const cur = state.results[tc.id];
+      if (!cur?.attachments) return;
+      cur.attachments.splice(idx, 1);
+      renderStep();
+    });
 
     const isLast = state.current === total - 1;
     const hasSavedSession = !!state.cases[state.current]; // always true; indicator based on session
@@ -202,7 +245,12 @@ TF.Views.Testing = (() => {
     const evaluation = selected
       ? selected.dataset.eval
       : (state.results[tc.id]?.evaluation || '');
-    state.results[tc.id] = { actualResult: actual, evaluation };
+    // Attachments megmaradnak – csak az actual+evaluation frissül
+    state.results[tc.id] = {
+      actualResult: actual,
+      evaluation,
+      attachments: state.results[tc.id]?.attachments || []
+    };
   }
 
   async function finish() {
