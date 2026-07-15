@@ -1,29 +1,33 @@
+using System.Reflection;
 using Dapper;
 
 namespace TestFlow.API.Models;
 
-// Dapper snake_case → PascalCase mapping
+// ── Snake_case → PascalCase Dapper mapper ────────────────────
+// Dapper az adatbázis oszlopneveit (snake_case) mappeli a C# property-kre
 public class SnakeCaseMapper : SqlMapper.ITypeMap
 {
-    private readonly DefaultTypeMap _default;
-    public SnakeCaseMapper(Type type) => _default = new DefaultTypeMap(type);
+    private readonly DefaultTypeMap _inner;
+    public SnakeCaseMapper(Type type) => _inner = new DefaultTypeMap(type);
+
+    // snake_case → PascalCase konverzió (suite_id → SuiteId)
+    private static string ToPascal(string col) =>
+        string.Concat(col.Split('_').Select(w =>
+            w.Length > 0 ? char.ToUpperInvariant(w[0]) + w[1..] : w));
 
     public ConstructorInfo? FindConstructor(string[] names, Type[] types)
-        => _default.FindConstructor(names, types);
+        => _inner.FindConstructor(names, types);
 
     public ConstructorInfo? FindExplicitConstructor()
-        => _default.FindExplicitConstructor();
+        => _inner.FindExplicitConstructor();
 
     public SqlMapper.IMemberMap? GetConstructorParameter(ConstructorInfo constructor, string columnName)
-        => _default.GetConstructorParameter(constructor, columnName);
+        => _inner.GetConstructorParameter(constructor, ToPascal(columnName))
+        ?? _inner.GetConstructorParameter(constructor, columnName);
 
     public SqlMapper.IMemberMap? GetMember(string columnName)
-    {
-        // snake_case → PascalCase: suite_id → SuiteId
-        var pascal = string.Concat(columnName.Split('_')
-            .Select(s => char.ToUpperInvariant(s[0]) + s[1..]));
-        return _default.GetMember(pascal) ?? _default.GetMember(columnName);
-    }
+        => _inner.GetMember(ToPascal(columnName))
+        ?? _inner.GetMember(columnName);
 }
 
 // ── Domain modellek ──────────────────────────────────────────
