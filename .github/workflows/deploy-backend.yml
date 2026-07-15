@@ -1,0 +1,25 @@
+name: Backend deploy → Render
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend/**'
+      - 'render.yaml'
+      - '.github/workflows/deploy-backend.yml'
+
+jobs:
+  deploy:
+    name: Deploy backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Render deploy hook – a Render dashboard-on generálod
+      # Service → Settings → Deploy Hook → másold ki az URL-t
+      # GitHub Secret neve: RENDER_DEPLOY_HOOK_URL
+      - name: Trigger Render deploy
+        run: |
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"

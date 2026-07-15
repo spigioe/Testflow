@@ -1,224 +1,184 @@
 #!/usr/bin/env dotnet-script
 // ============================================================
-//  TestFlow – JSON → SQLite importáló szkript
+//  TestFlow – JSON → PostgreSQL importáló szkript
 //
-//  Telepítés (egyszer):
+//  Telepítés:
 //    dotnet tool install -g dotnet-script
 //
 //  Futtatás:
-//    dotnet script import-json.csx -- <json_fájl> <sqlite_fájl>
+//    dotnet script import-json.csx -- <json_fájl> "<connection_string>"
 //
 //  Példa:
-//    dotnet script import-json.csx -- testflow_data.json testflow.db
+//    dotnet script import-json.csx -- data.json \
+//      "Host=dpg-xxx.oregon-postgres.render.com;Database=testflow;Username=testflow;Password=xxx;SSL Mode=Require;Trust Server Certificate=true;"
+//
+//  A connection string a Render dashboardon:
+//    testflow-db → Info → External Connection String
 // ============================================================
 
-#r "nuget: Microsoft.Data.Sqlite, 8.0.0"
+#r "nuget: Npgsql, 8.0.3"
 #r "nuget: System.Text.Json, 8.0.0"
 
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Data.Sqlite;
+using Npgsql;
 
-// ── Argumentumok ────────────────────────────────────────────
 if (Args.Count < 2)
 {
-    Console.WriteLine("Használat: dotnet script import-json.csx -- <json_fájl> <sqlite_fájl>");
-    Console.WriteLine("Példa:     dotnet script import-json.csx -- data.json testflow.db");
+    Console.WriteLine("Használat: dotnet script import-json.csx -- <json> \"<connection_string>\"");
     return 1;
 }
 
-var jsonPath   = Args[0];
-var sqlitePath = Args[1];
+var jsonPath  = Args[0];
+var connStr   = Args[1];
 
 if (!File.Exists(jsonPath))
 {
-    Console.Error.WriteLine($"[HIBA] A JSON fájl nem található: {jsonPath}");
+    Console.Error.WriteLine($"[HIBA] JSON fájl nem található: {jsonPath}");
     return 1;
 }
 
-Console.WriteLine($"[→] JSON fájl: {jsonPath}");
-Console.WriteLine($"[→] SQLite DB: {sqlitePath}");
+// postgres:// URL → Npgsql konverzió
+if (connStr.StartsWith("postgres://") || connStr.StartsWith("postgresql://"))
+{
+    var uri  = new Uri(connStr);
+    var user = uri.UserInfo.Split(':');
+    var db   = uri.AbsolutePath.TrimStart('/');
+    connStr  = $"Host={uri.Host};Port={uri.Port};Database={db};" +
+               $"Username={user[0]};Password={user[1]};" +
+               $"SSL Mode=Require;Trust Server Certificate=true;";
+}
 
-// ── JSON beolvasás ────────────────────────────────────────────
+Console.WriteLine($"[→] JSON: {jsonPath}");
+Console.WriteLine($"[→] DB:   {connStr[..Math.Min(60, connStr.Length)]}...");
+
 var jsonText = await File.ReadAllTextAsync(jsonPath);
 var root     = JsonNode.Parse(jsonText)!;
 
-// Támogatja mind a régi (tömb) és az új ({ suites: [...] }) formátumot
-JsonArray suitesArray;
-if (root is JsonArray arr)
-{
-    suitesArray = arr;
-    Console.WriteLine("[!] Régi formátum (tömb) detektálva – automatikus konverzió...");
-}
-else
-{
-    suitesArray = root["suites"]?.AsArray() ?? new JsonArray();
-}
+JsonArray suitesArr = root is JsonArray a ? a
+    : root["suites"]?.AsArray() ?? new JsonArray();
 
-Console.WriteLine($"[✓] {suitesArray.Count} halmaz beolvasva");
+Console.WriteLine($"[✓] {suitesArr.Count} halmaz beolvasva");
 
-// ── SQLite kapcsolat + séma ────────────────────────────────────
-var conn = new SqliteConnection($"Data Source={sqlitePath}");
-conn.Open();
-
-void Exec(string sql, object? parms = null)
-{
-    using var cmd = conn.CreateCommand();
-    cmd.CommandText = sql;
-    if (parms != null)
-    {
-        foreach (var prop in parms.GetType().GetProperties())
-            cmd.Parameters.AddWithValue($"@{prop.Name}", prop.GetValue(parms) ?? DBNull.Value);
-    }
-    cmd.ExecuteNonQuery();
-}
-
-// Séma (idempotens)
-Exec("PRAGMA foreign_keys = ON");
-Exec("PRAGMA journal_mode = WAL");
-Exec("""
-    CREATE TABLE IF NOT EXISTS Suites (
-        Id TEXT PRIMARY KEY, Name TEXT NOT NULL, Notes TEXT NOT NULL DEFAULT '',
-        Status TEXT NOT NULL DEFAULT '', ClickupId TEXT NOT NULL DEFAULT '',
-        IsCompleted INTEGER NOT NULL DEFAULT 0, TestSession TEXT DEFAULT NULL,
-        SortOrder INTEGER NOT NULL DEFAULT 0,
-        CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-        UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-    """);
-Exec("""
-    CREATE TABLE IF NOT EXISTS TestCases (
-        Id TEXT PRIMARY KEY, SuiteId TEXT NOT NULL, Name TEXT NOT NULL,
-        Steps TEXT NOT NULL DEFAULT '', ExpectedResult TEXT NOT NULL DEFAULT '',
-        ActualResult TEXT NOT NULL DEFAULT '', Evaluation TEXT NOT NULL DEFAULT '',
-        SortOrder INTEGER NOT NULL DEFAULT 0,
-        CreatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-        UpdatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-    """);
-Exec("""
-    CREATE TABLE IF NOT EXISTS Attachments (
-        Id INTEGER PRIMARY KEY AUTOINCREMENT, TestCaseId TEXT NOT NULL,
-        DataUrl TEXT NOT NULL, FileName TEXT NOT NULL DEFAULT '',
-        SizePx TEXT NOT NULL DEFAULT '', SizeKb INTEGER NOT NULL DEFAULT 0,
-        SortOrder INTEGER NOT NULL DEFAULT 0,
-        CreatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-    """);
-Exec("CREATE INDEX IF NOT EXISTS idx_tc_suite ON TestCases(SuiteId)");
-Exec("CREATE INDEX IF NOT EXISTS idx_att_tc   ON Attachments(TestCaseId)");
-
-// ── Import ───────────────────────────────────────────────────
-using var tx = conn.BeginTransaction();
-int suiteCount = 0, tcCount = 0, attCount = 0;
+await using var conn = new NpgsqlConnection(connStr);
+await conn.OpenAsync();
 
 string S(JsonNode? n) => n?.GetValue<string>() ?? "";
 bool   B(JsonNode? n) => n?.GetValue<bool>() ?? false;
-int    I(JsonNode? n, int def = 0)
-{
-    try { return n?.GetValue<int>() ?? def; }
-    catch { return def; }
-}
+int    I(JsonNode? n) { try { return n?.GetValue<int>() ?? 0; } catch { return 0; } }
 
-for (int si = 0; si < suitesArray.Count; si++)
+await using var tx = await conn.BeginTransactionAsync();
+int suites = 0, tcs = 0, atts = 0;
+
+for (int si = 0; si < suitesArr.Count; si++)
 {
-    var s     = suitesArray[si]!;
+    var s       = suitesArr[si]!;
     var suiteId = S(s["id"]);
     if (string.IsNullOrWhiteSpace(suiteId)) suiteId = Guid.NewGuid().ToString();
 
-    using (var cmd = conn.CreateCommand())
+    await using (var cmd = conn.CreateCommand())
     {
-        cmd.Transaction = tx;
-        cmd.CommandText = """
-            INSERT OR REPLACE INTO Suites
-                (Id, Name, Notes, Status, ClickupId, IsCompleted, TestSession, SortOrder)
-            VALUES
-                (@Id, @Name, @Notes, @Status, @ClickupId, @IsCompleted, @TestSession, @SortOrder)
+        cmd.Transaction  = tx;
+        cmd.CommandText  = """
+            INSERT INTO suites (id, name, notes, status, clickup_id, is_completed, test_session, sort_order)
+            VALUES (@id, @name, @notes, @status, @clickup_id, @is_completed, @test_session, @sort_order)
+            ON CONFLICT (id) DO UPDATE SET
+                name         = EXCLUDED.name,
+                notes        = EXCLUDED.notes,
+                status       = EXCLUDED.status,
+                clickup_id   = EXCLUDED.clickup_id,
+                is_completed = EXCLUDED.is_completed,
+                test_session = EXCLUDED.test_session,
+                sort_order   = EXCLUDED.sort_order
             """;
-        cmd.Parameters.AddWithValue("@Id",          suiteId);
-        cmd.Parameters.AddWithValue("@Name",        S(s["name"]));
-        cmd.Parameters.AddWithValue("@Notes",       S(s["notes"]));
-        cmd.Parameters.AddWithValue("@Status",      S(s["status"]));
-        cmd.Parameters.AddWithValue("@ClickupId",   S(s["clickupId"]));
-        cmd.Parameters.AddWithValue("@IsCompleted", B(s["isCompleted"]) ? 1 : 0);
-        cmd.Parameters.AddWithValue("@TestSession", (object?)(s["testSession"]?.ToJsonString()) ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@SortOrder",   si);
-        cmd.ExecuteNonQuery();
+        cmd.Parameters.AddWithValue("id",           suiteId);
+        cmd.Parameters.AddWithValue("name",         S(s["name"]));
+        cmd.Parameters.AddWithValue("notes",        S(s["notes"]));
+        cmd.Parameters.AddWithValue("status",       S(s["status"]));
+        cmd.Parameters.AddWithValue("clickup_id",   S(s["clickupId"]));
+        cmd.Parameters.AddWithValue("is_completed", B(s["isCompleted"]));
+        cmd.Parameters.AddWithValue("test_session", (object?)(s["testSession"]?.ToJsonString()) ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("sort_order",   si);
+        await cmd.ExecuteNonQueryAsync();
     }
-    suiteCount++;
+    suites++;
 
-    var tcs = s["testCases"]?.AsArray() ?? new JsonArray();
-    for (int ti = 0; ti < tcs.Count; ti++)
+    var tcsArr = s["testCases"]?.AsArray() ?? new JsonArray();
+    for (int ti = 0; ti < tcsArr.Count; ti++)
     {
-        var tc   = tcs[ti]!;
+        var tc   = tcsArr[ti]!;
         var tcId = S(tc["id"]);
-        if (string.IsNullOrWhiteSpace(tcId)) tcId = $"TC_{Guid.NewGuid():N}"[..12];
+        if (string.IsNullOrWhiteSpace(tcId)) tcId = Guid.NewGuid().ToString();
 
-        using (var cmd = conn.CreateCommand())
+        await using (var cmd = conn.CreateCommand())
         {
             cmd.Transaction = tx;
             cmd.CommandText = """
-                INSERT OR REPLACE INTO TestCases
-                    (Id, SuiteId, Name, Steps, ExpectedResult, ActualResult, Evaluation, SortOrder)
+                INSERT INTO test_cases
+                    (id, suite_id, name, steps, expected_result, actual_result, evaluation, sort_order)
                 VALUES
-                    (@Id, @SuiteId, @Name, @Steps, @ExpectedResult, @ActualResult, @Evaluation, @SortOrder)
+                    (@id, @suite_id, @name, @steps, @expected_result, @actual_result, @evaluation, @sort_order)
+                ON CONFLICT (id) DO UPDATE SET
+                    name            = EXCLUDED.name,
+                    steps           = EXCLUDED.steps,
+                    expected_result = EXCLUDED.expected_result,
+                    actual_result   = EXCLUDED.actual_result,
+                    evaluation      = EXCLUDED.evaluation,
+                    sort_order      = EXCLUDED.sort_order
                 """;
-            cmd.Parameters.AddWithValue("@Id",             tcId);
-            cmd.Parameters.AddWithValue("@SuiteId",        suiteId);
-            cmd.Parameters.AddWithValue("@Name",           S(tc["name"]));
-            cmd.Parameters.AddWithValue("@Steps",          S(tc["steps"]));
-            cmd.Parameters.AddWithValue("@ExpectedResult", S(tc["expectedResult"]));
-            cmd.Parameters.AddWithValue("@ActualResult",   S(tc["actualResult"]));
-            cmd.Parameters.AddWithValue("@Evaluation",     S(tc["evaluation"]));
-            cmd.Parameters.AddWithValue("@SortOrder",      ti);
-            cmd.ExecuteNonQuery();
+            cmd.Parameters.AddWithValue("id",              tcId);
+            cmd.Parameters.AddWithValue("suite_id",        suiteId);
+            cmd.Parameters.AddWithValue("name",            S(tc["name"]));
+            cmd.Parameters.AddWithValue("steps",           S(tc["steps"]));
+            cmd.Parameters.AddWithValue("expected_result", S(tc["expectedResult"]));
+            cmd.Parameters.AddWithValue("actual_result",   S(tc["actualResult"]));
+            cmd.Parameters.AddWithValue("evaluation",      S(tc["evaluation"]));
+            cmd.Parameters.AddWithValue("sort_order",      ti);
+            await cmd.ExecuteNonQueryAsync();
         }
-        tcCount++;
+        tcs++;
 
-        // Csatolmányok törlése majd újrafelvétel
-        using (var del = conn.CreateCommand())
+        // Csatolmányok
+        await using (var del = conn.CreateCommand())
         {
-            del.Transaction  = tx;
-            del.CommandText  = "DELETE FROM Attachments WHERE TestCaseId = @TcId";
-            del.Parameters.AddWithValue("@TcId", tcId);
-            del.ExecuteNonQuery();
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM attachments WHERE test_case_id = @id";
+            del.Parameters.AddWithValue("id", tcId);
+            await del.ExecuteNonQueryAsync();
         }
 
-        var atts = tc["attachments"]?.AsArray() ?? new JsonArray();
-        for (int ai = 0; ai < atts.Count; ai++)
+        var attsArr = tc["attachments"]?.AsArray() ?? new JsonArray();
+        for (int ai = 0; ai < attsArr.Count; ai++)
         {
-            var att = atts[ai]!;
-            using var cmd = conn.CreateCommand();
-            cmd.Transaction  = tx;
-            cmd.CommandText  = """
-                INSERT INTO Attachments (TestCaseId, DataUrl, FileName, SizePx, SizeKb, SortOrder)
-                VALUES (@TestCaseId, @DataUrl, @FileName, @SizePx, @SizeKb, @SortOrder)
+            var att = attsArr[ai]!;
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO attachments (test_case_id, data_url, file_name, size_px, size_kb, sort_order)
+                VALUES (@tc_id, @data_url, @file_name, @size_px, @size_kb, @sort_order)
                 """;
-            cmd.Parameters.AddWithValue("@TestCaseId", tcId);
-            cmd.Parameters.AddWithValue("@DataUrl",    S(att["dataUrl"]));
-            cmd.Parameters.AddWithValue("@FileName",   S(att["name"]) is var fn && fn != "" ? fn : S(att["fileName"]));
-            cmd.Parameters.AddWithValue("@SizePx",     S(att["sizePx"]));
-            cmd.Parameters.AddWithValue("@SizeKb",     I(att["sizeKb"]));
-            cmd.Parameters.AddWithValue("@SortOrder",  ai);
-            cmd.ExecuteNonQuery();
-            attCount++;
+            cmd.Parameters.AddWithValue("tc_id",      tcId);
+            cmd.Parameters.AddWithValue("data_url",   S(att["dataUrl"]));
+            cmd.Parameters.AddWithValue("file_name",  S(att["name"]) is var fn && fn != "" ? fn : S(att["fileName"]));
+            cmd.Parameters.AddWithValue("size_px",    S(att["sizePx"]));
+            cmd.Parameters.AddWithValue("size_kb",    I(att["sizeKb"]));
+            cmd.Parameters.AddWithValue("sort_order", ai);
+            await cmd.ExecuteNonQueryAsync();
+            atts++;
         }
     }
 
-    if ((si + 1) % 10 == 0)
-        Console.WriteLine($"  [{si + 1}/{suitesArray.Count}] feldolgozva...");
+    if ((si + 1) % 5 == 0 || si == suitesArr.Count - 1)
+        Console.WriteLine($"  [{si + 1}/{suitesArr.Count}] feldolgozva...");
 }
 
-tx.Commit();
-conn.Close();
+await tx.CommitAsync();
 
 Console.WriteLine();
-Console.WriteLine("╔══════════════════════════════════════╗");
-Console.WriteLine("║         Import kész!                 ║");
-Console.WriteLine($"║  Halmazok:    {suiteCount,-5}                   ║");
-Console.WriteLine($"║  Tesztesetek: {tcCount,-5}                   ║");
-Console.WriteLine($"║  Csatolmány:  {attCount,-5}                   ║");
-Console.WriteLine("╚══════════════════════════════════════╝");
-Console.WriteLine($"SQLite fájl: {sqlitePath}");
-
+Console.WriteLine("╔══════════════════════════════════╗");
+Console.WriteLine("║       Import kész!               ║");
+Console.WriteLine($"║  Halmazok:    {suites,-5}             ║");
+Console.WriteLine($"║  Tesztesetek: {tcs,-5}             ║");
+Console.WriteLine($"║  Csatolmány:  {atts,-5}             ║");
+Console.WriteLine("╚══════════════════════════════════╝");
 return 0;

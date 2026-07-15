@@ -1,8 +1,7 @@
-# fly.toml – TestFlow backend (ASP.NET Core + SQLite)
-# Deploy: fly deploy (a backend/ mappából)
-
-app = "testflow-api"          # módosítsd egyedi névre ha ütközik
-primary_region = "ams"        # Amsterdam – EU-hoz közel
+# fly.toml – megmarad helyi Docker Compose-hoz, Render-en nem használt
+# Ha mégis Fly.io-t szeretnél: add hozzá a DATABASE_URL-t secrets-ként
+app = "testflow-api"
+primary_region = "ams"
 
 [build]
   dockerfile = "Dockerfile"
@@ -10,35 +9,14 @@ primary_region = "ams"        # Amsterdam – EU-hoz közel
 [env]
   ASPNETCORE_ENVIRONMENT = "Production"
   ASPNETCORE_URLS        = "http://+:8080"
-  Database__Path         = "/data/testflow.db"
 
 [http_service]
-  internal_port        = 8080
-  force_https          = true
-  auto_stop_machines   = true   # free tier: leáll ha nincs forgalom
-  auto_start_machines  = true   # automatikusan felébred kérésre
-  min_machines_running = 0      # 0 = teljesen leáll ha nincs kérés (ingyen)
-
-  [http_service.concurrency]
-    type       = "connections"
-    hard_limit = 25
-    soft_limit = 20
+  internal_port      = 8080
+  force_https        = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
 
 [[vm]]
-  size = "shared-cpu-1x"        # free tier machine
+  size   = "shared-cpu-1x"
   memory = "256mb"
-
-# SQLite perzisztens volume
-[[mounts]]
-  source      = "testflow_data"
-  destination = "/data"
-
-[checks]
-  [checks.health]
-    grace_period = "10s"
-    interval     = "30s"
-    method       = "GET"
-    path         = "/health"
-    port         = 8080
-    timeout      = "5s"
-    type         = "http"

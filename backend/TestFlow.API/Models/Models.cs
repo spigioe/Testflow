@@ -1,23 +1,47 @@
+using Dapper;
+
 namespace TestFlow.API.Models;
 
-// ── Teszteset halmaz ──────────────────────────────────────────
-public record Suite
+// Dapper snake_case → PascalCase mapping
+public class SnakeCaseMapper : SqlMapper.ITypeMap
 {
-    public string Id          { get; init; } = Guid.NewGuid().ToString();
-    public string Name        { get; set; }  = "";
-    public string Notes       { get; set; }  = "";
-    public string Status      { get; set; }  = "";
-    public string ClickupId   { get; set; }  = "";
-    public bool   IsCompleted { get; set; }  = false;
-    public string? TestSession { get; set; } = null;  // JSON string
-    public int    SortOrder   { get; set; }  = 0;
+    private readonly DefaultTypeMap _default;
+    public SnakeCaseMapper(Type type) => _default = new DefaultTypeMap(type);
 
-    // Navigation (nem DB oszlop, API válaszban töltjük)
+    public ConstructorInfo? FindConstructor(string[] names, Type[] types)
+        => _default.FindConstructor(names, types);
+
+    public ConstructorInfo? FindExplicitConstructor()
+        => _default.FindExplicitConstructor();
+
+    public SqlMapper.IMemberMap? GetConstructorParameter(ConstructorInfo constructor, string columnName)
+        => _default.GetConstructorParameter(constructor, columnName);
+
+    public SqlMapper.IMemberMap? GetMember(string columnName)
+    {
+        // snake_case → PascalCase: suite_id → SuiteId
+        var pascal = string.Concat(columnName.Split('_')
+            .Select(s => char.ToUpperInvariant(s[0]) + s[1..]));
+        return _default.GetMember(pascal) ?? _default.GetMember(columnName);
+    }
+}
+
+// ── Domain modellek ──────────────────────────────────────────
+public class Suite
+{
+    public string  Id          { get; set; } = Guid.NewGuid().ToString();
+    public string  Name        { get; set; } = "";
+    public string  Notes       { get; set; } = "";
+    public string  Status      { get; set; } = "";
+    public string  ClickupId   { get; set; } = "";
+    public bool    IsCompleted { get; set; } = false;
+    public string? TestSession { get; set; } = null;
+    public int     SortOrder   { get; set; } = 0;
+
     public List<TestCase> TestCases { get; set; } = [];
 }
 
-// ── Teszteset ─────────────────────────────────────────────────
-public record TestCase
+public class TestCase
 {
     public string Id             { get; set; } = "";
     public string SuiteId        { get; set; } = "";
@@ -28,14 +52,12 @@ public record TestCase
     public string Evaluation     { get; set; } = "";
     public int    SortOrder      { get; set; } = 0;
 
-    // Navigation
     public List<Attachment> Attachments { get; set; } = [];
 }
 
-// ── Csatolmány ────────────────────────────────────────────────
-public record Attachment
+public class Attachment
 {
-    public int    Id         { get; init; }
+    public int    Id         { get; set; }
     public string TestCaseId { get; set; } = "";
     public string DataUrl    { get; set; } = "";
     public string FileName   { get; set; } = "";

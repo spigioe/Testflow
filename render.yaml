@@ -1,0 +1,38 @@
+# render.yaml – TestFlow backend infrastruktúra
+# Render ezt automatikusan felismeri a repo gyökerében.
+# Dashboard: render.com → New → Blueprint → GitHub repo kiválasztása
+
+services:
+
+  # ── ASP.NET Core Web API ──────────────────────────────────────
+  - type: web
+    name: testflow-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+
+    # Render ingyenes tier
+    plan: free
+
+    # Egészség-ellenőrzés
+    healthCheckPath: /health
+
+    # Env változók – a DATABASE_URL-t Render automatikusan beállítja
+    # a lenti 'databases' szekcióból
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: testflow-db
+          property: connectionString
+      - key: FRONTEND_URL
+        sync: false   # Manuálisan töltsd ki a Render dashboardon
+                      # Vercel deploy után: https://testflow-XYZ.vercel.app
+
+# ── PostgreSQL adatbázis ──────────────────────────────────────
+databases:
+  - name: testflow-db
+    plan: free        # Render ingyenes PostgreSQL (90 nap után fizetős!)
+    databaseName: testflow
+    user: testflow

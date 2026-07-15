@@ -8,19 +8,19 @@ public class SuiteRepository(Database db)
     // ── Összes suite ───────────────────────────────────────────
     public async Task<List<Suite>> GetAllAsync()
     {
-        using var conn = db.Open();
+        await using var conn = await db.OpenAsync();
+
         var suites = (await conn.QueryAsync<Suite>(
-            "SELECT * FROM Suites ORDER BY SortOrder, CreatedAt")).ToList();
+            "SELECT * FROM suites ORDER BY sort_order, created_at")).ToList();
 
         if (!suites.Any()) return suites;
 
         var testCases = (await conn.QueryAsync<TestCase>(
-            "SELECT * FROM TestCases ORDER BY SortOrder")).ToList();
+            "SELECT * FROM test_cases ORDER BY suite_id, sort_order")).ToList();
 
         var attachments = (await conn.QueryAsync<Attachment>(
-            "SELECT * FROM Attachments ORDER BY SortOrder")).ToList();
+            "SELECT * FROM attachments ORDER BY test_case_id, sort_order")).ToList();
 
-        // Assembling
         var attByTc   = attachments.GroupBy(a => a.TestCaseId)
                                    .ToDictionary(g => g.Key, g => g.ToList());
         var tcBySuite = testCases.GroupBy(t => t.SuiteId)
@@ -38,28 +38,24 @@ public class SuiteRepository(Database db)
     // ── Egy suite ──────────────────────────────────────────────
     public async Task<Suite?> GetByIdAsync(string id)
     {
-        using var conn = db.Open();
+        await using var conn = await db.OpenAsync();
+
         var suite = await conn.QueryFirstOrDefaultAsync<Suite>(
-            "SELECT * FROM Suites WHERE Id = @Id", new { Id = id });
+            "SELECT * FROM suites WHERE id = @Id", new { Id = id });
 
         if (suite is null) return null;
 
         var testCases = (await conn.QueryAsync<TestCase>(
-            "SELECT * FROM TestCases WHERE SuiteId = @SuiteId ORDER BY SortOrder",
+            "SELECT * FROM test_cases WHERE suite_id = @SuiteId ORDER BY sort_order",
             new { SuiteId = id })).ToList();
 
-        var tcIds = testCases.Select(t => t.Id).ToList();
         List<Attachment> attachments = [];
-
-        if (tcIds.Any())
+        if (testCases.Any())
         {
-            var inClause = string.Join(",", tcIds.Select((_, i) => $"@p{i}"));
-            var parms = new DynamicParameters();
-            for (int i = 0; i < tcIds.Count; i++) parms.Add($"p{i}", tcIds[i]);
-
+            var tcIds = testCases.Select(t => t.Id).ToArray();
             attachments = (await conn.QueryAsync<Attachment>(
-                $"SELECT * FROM Attachments WHERE TestCaseId IN ({inClause}) ORDER BY SortOrder",
-                parms)).ToList();
+                "SELECT * FROM attachments WHERE test_case_id = ANY(@Ids) ORDER BY sort_order",
+                new { Ids = tcIds })).ToList();
         }
 
         var attByTc = attachments.GroupBy(a => a.TestCaseId)
@@ -72,100 +68,110 @@ public class SuiteRepository(Database db)
         return suite;
     }
 
-    // ── Upsert suite (teljes suite cseréje) ────────────────────
+    // ── Upsert ─────────────────────────────────────────────────
     public async Task UpsertAsync(UpsertSuiteRequest req)
     {
-        using var conn = db.Open();
-        using var tx   = conn.BeginTransaction();
+        await using var conn = await db.OpenAsync();
+        await using var tx   = await conn.BeginTransactionAsync();
 
-        // Suite
+        // Suite upsert
         await conn.ExecuteAsync("""
-            INSERT INTO Suites (Id, Name, Notes, Status, ClickupId, IsCompleted, TestSession, SortOrder)
+            INSERT INTO suites (id, name, notes, status, clickup_id, is_completed, test_session, sort_order)
             VALUES (@Id, @Name, @Notes, @Status, @ClickupId, @IsCompleted, @TestSession, @SortOrder)
-            ON CONFLICT(Id) DO UPDATE SET
-                Name        = excluded.Name,
-                Notes       = excluded.Notes,
-                Status      = excluded.Status,
-                ClickupId   = excluded.ClickupId,
-                IsCompleted = excluded.IsCompleted,
-                TestSession = excluded.TestSession,
-                SortOrder   = excluded.SortOrder,
-                UpdatedAt   = datetime('now')
+            ON CONFLICT (id) DO UPDATE SET
+                name         = EXCLUDED.name,
+                notes        = EXCLUDED.notes,
+                status       = EXCLUDED.status,
+                clickup_id   = EXCLUDED.clickup_id,
+                is_completed = EXCLUDED.is_completed,
+                test_session = EXCLUDED.test_session,
+                sort_order   = EXCLUDED.sort_order
             """, new {
-                req.Id, req.Name, req.Notes, req.Status, req.ClickupId,
-                IsCompleted = req.IsCompleted ? 1 : 0,
-                req.TestSession, req.SortOrder
+                req.Id, req.Name, req.Notes, req.Status,
+                ClickupId   = req.ClickupId,
+                IsCompleted = req.IsCompleted,
+                TestSession = req.TestSession,
+                SortOrder   = req.SortOrder
             }, tx);
 
-        // Meglévő tesztesetek ID-jait összegyűjtjük
+        // Kiesett TC-k törlése
         var existingIds = (await conn.QueryAsync<string>(
-            "SELECT Id FROM TestCases WHERE SuiteId = @SuiteId",
+            "SELECT id FROM test_cases WHERE suite_id = @SuiteId",
             new { SuiteId = req.Id }, tx)).ToHashSet();
 
         var incomingIds = req.TestCases.Select(t => t.Id).ToHashSet();
 
-        // Töröljük azokat amik kikerültek
         foreach (var oldId in existingIds.Except(incomingIds))
-            await conn.ExecuteAsync("DELETE FROM TestCases WHERE Id = @Id", new { Id = oldId }, tx);
+            await conn.ExecuteAsync(
+                "DELETE FROM test_cases WHERE id = @Id", new { Id = oldId }, tx);
 
-        // TestCase-ek upsert
+        // TC-k upsert
         for (int i = 0; i < req.TestCases.Count; i++)
         {
             var tc = req.TestCases[i];
+
             await conn.ExecuteAsync("""
-                INSERT INTO TestCases (Id, SuiteId, Name, Steps, ExpectedResult, ActualResult, Evaluation, SortOrder)
-                VALUES (@Id, @SuiteId, @Name, @Steps, @ExpectedResult, @ActualResult, @Evaluation, @SortOrder)
-                ON CONFLICT(Id) DO UPDATE SET
-                    Name           = excluded.Name,
-                    Steps          = excluded.Steps,
-                    ExpectedResult = excluded.ExpectedResult,
-                    ActualResult   = excluded.ActualResult,
-                    Evaluation     = excluded.Evaluation,
-                    SortOrder      = excluded.SortOrder,
-                    UpdatedAt      = datetime('now')
+                INSERT INTO test_cases
+                    (id, suite_id, name, steps, expected_result, actual_result, evaluation, sort_order)
+                VALUES
+                    (@Id, @SuiteId, @Name, @Steps, @ExpectedResult, @ActualResult, @Evaluation, @SortOrder)
+                ON CONFLICT (id) DO UPDATE SET
+                    name            = EXCLUDED.name,
+                    steps           = EXCLUDED.steps,
+                    expected_result = EXCLUDED.expected_result,
+                    actual_result   = EXCLUDED.actual_result,
+                    evaluation      = EXCLUDED.evaluation,
+                    sort_order      = EXCLUDED.sort_order
                 """, new {
                     tc.Id, SuiteId = req.Id, tc.Name, tc.Steps,
-                    tc.ExpectedResult, tc.ActualResult, tc.Evaluation,
+                    ExpectedResult = tc.ExpectedResult,
+                    ActualResult   = tc.ActualResult,
+                    tc.Evaluation,
                     SortOrder = i
                 }, tx);
 
-            // Csatolmányok: töröljük a régit, felírjuk az újat
+            // Csatolmányok: töröl + újrafelvesz
             await conn.ExecuteAsync(
-                "DELETE FROM Attachments WHERE TestCaseId = @TcId",
+                "DELETE FROM attachments WHERE test_case_id = @TcId",
                 new { TcId = tc.Id }, tx);
 
             for (int j = 0; j < tc.Attachments.Count; j++)
             {
                 var att = tc.Attachments[j];
                 await conn.ExecuteAsync("""
-                    INSERT INTO Attachments (TestCaseId, DataUrl, FileName, SizePx, SizeKb, SortOrder)
-                    VALUES (@TestCaseId, @DataUrl, @FileName, @SizePx, @SizeKb, @SortOrder)
+                    INSERT INTO attachments
+                        (test_case_id, data_url, file_name, size_px, size_kb, sort_order)
+                    VALUES
+                        (@TestCaseId, @DataUrl, @FileName, @SizePx, @SizeKb, @SortOrder)
                     """, new {
-                        TestCaseId = tc.Id, att.DataUrl, att.FileName,
-                        att.SizePx, att.SizeKb, SortOrder = j
+                        TestCaseId = tc.Id,
+                        att.DataUrl, att.FileName, att.SizePx, att.SizeKb,
+                        SortOrder = j
                     }, tx);
             }
         }
 
-        tx.Commit();
+        await tx.CommitAsync();
     }
 
     // ── Törlés ─────────────────────────────────────────────────
     public async Task DeleteAsync(string id)
     {
-        using var conn = db.Open();
-        await conn.ExecuteAsync("DELETE FROM Suites WHERE Id = @Id", new { Id = id });
+        await using var conn = await db.OpenAsync();
+        await conn.ExecuteAsync("DELETE FROM suites WHERE id = @Id", new { Id = id });
     }
 
     // ── Átrendezés ─────────────────────────────────────────────
     public async Task ReorderAsync(List<string> orderedIds)
     {
-        using var conn = db.Open();
-        using var tx   = conn.BeginTransaction();
+        await using var conn = await db.OpenAsync();
+        await using var tx   = await conn.BeginTransactionAsync();
+
         for (int i = 0; i < orderedIds.Count; i++)
             await conn.ExecuteAsync(
-                "UPDATE Suites SET SortOrder = @Order WHERE Id = @Id",
+                "UPDATE suites SET sort_order = @Order WHERE id = @Id",
                 new { Order = i, Id = orderedIds[i] }, tx);
-        tx.Commit();
+
+        await tx.CommitAsync();
     }
 }

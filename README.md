@@ -1,151 +1,103 @@
 # TestFlow – Deploy útmutató
-## Backend → Fly.io | Frontend → Vercel
+## Backend → Render.com | Frontend → Vercel
 
 ---
 
-## Előfeltételek
+## 1. Backend deploy (Render) – csak böngésző kell
 
-```bash
-# Fly.io CLI
-curl -L https://fly.io/install.sh | sh
+### 1.1 Render Blueprint (egy kattintás)
 
-# Bejelentkezés
-fly auth login
-```
-
-Vercelhez: [vercel.com](https://vercel.com) – GitHub fiókkal regisztrálj.
-
----
-
-## 1. Backend deploy (Fly.io)
-
-### 1.1 Volume létrehozása (SQLite perzisztencia)
-
-```bash
-cd backend
-
-# App létrehozása (egyszer)
-fly apps create testflow-api
-# Ha a név foglalt, válassz másikat – majd frissítsd a fly.toml-ban is
-
-# Perzisztens volume az SQLite fájlhoz (1 GB ingyenes)
-fly volumes create testflow_data \
-  --app testflow-api \
-  --region ams \
-  --size 1
-```
-
-### 1.2 CORS beállítása (a Vercel URL ismerete után)
-
-```bash
-# Vercel URL beállítása secret-ként
-fly secrets set FRONTEND_URL=https://testflow-XYZ.vercel.app \
-  --app testflow-api
-```
-
-### 1.3 Deploy
-
-```bash
-cd backend   # ahol a fly.toml van
-fly deploy
-```
+1. Menj: **[render.com](https://render.com)** → bejelentkezés GitHub-bal
+2. **New → Blueprint**
+3. Válaszd ki a GitHub repot
+4. Render felismeri a `render.yaml`-t → automatikusan létrehozza:
+   - `testflow-api` – ASP.NET Core Web API
+   - `testflow-db`  – PostgreSQL adatbázis
+5. Kattints: **Apply**
 
 Néhány perc múlva elérhető:
 ```
-https://testflow-api.fly.dev/health
+https://testflow-api.onrender.com/health
 ```
+
+### 1.2 CORS beállítása (Vercel URL ismerete után)
+
+Render dashboard → `testflow-api` service → **Environment** → `FRONTEND_URL` értékét állítsd be:
+```
+https://testflow-XYZ.vercel.app
+```
+Majd: **Save Changes** → automatikus redeploy.
 
 ---
 
-## 2. Frontend deploy (Vercel)
+## 2. Frontend deploy (Vercel) – csak böngésző kell
 
 ### 2.1 API URL beállítása
 
 Szerkeszd a `frontend/js/config.js` fájlt:
-
 ```js
-window.TF_API_URL = 'https://testflow-api.fly.dev';
-//                   ↑ A Fly.io app URL-je (1. lépésből)
+window.TF_API_URL = 'https://testflow-api.onrender.com';
 ```
 
-### 2.2 Deploy Vercel CLI-vel
+### 2.2 Vercel deploy
 
-```bash
-npm i -g vercel
-cd frontend
-vercel --prod
-```
-
-Vagy GitHub-on keresztül:
-1. Push a `frontend/` mappát egy GitHub repoba
-2. Vercel dashboard → New Project → importáld
+1. **[vercel.com](https://vercel.com)** → bejelentkezés GitHub-bal
+2. **New Project** → importáld a repot
 3. **Root Directory:** `frontend`
 4. **Framework Preset:** Other
-5. Deploy
-
-### 2.3 CORS visszafrissítése
-
-Ha megvan a Vercel URL (pl. `https://testflow-abc.vercel.app`):
-
-```bash
-fly secrets set FRONTEND_URL=https://testflow-abc.vercel.app \
-  --app testflow-api
-fly deploy --app testflow-api
-```
+5. **Deploy**
 
 ---
 
-## 3. Régi JSON adat importálása
+## 3. Automatikus deploy (GitHub Actions)
+
+### Backend: Render Deploy Hook
+
+Render dashboard → `testflow-api` → **Settings** → **Deploy Hook** → másold ki az URL-t
+
+GitHub repo → **Settings → Secrets → New secret:**
+| Neve | Értéke |
+|---|---|
+| `RENDER_DEPLOY_HOOK_URL` | A Render deploy hook URL |
+
+Ezután minden `backend/` változtatás automatikusan deploy-ol.
+
+### Frontend: Vercel
+
+Vercel automatikusan figyeli a repot – minden push-ra újradeploy-ol.
+
+---
+
+## 4. Régi JSON adat importálása
 
 ```bash
-# dotnet-script telepítése (egyszer)
+# Telepítés
 dotnet tool install -g dotnet-script
 
-# Import futtatása lokálisan
+# Connection string: Render dashboard → testflow-db → Info → External Connection String
 cd tools
-dotnet script import-json.csx -- /path/to/data.json ./testflow.db
-
-# DB másolása Fly.io volume-ra
-fly sftp shell --app testflow-api
-# > put testflow.db /data/testflow.db
-# > exit
+dotnet script import-json.csx -- /path/to/data.json "postgres://user:pass@host/db"
 ```
 
 ---
 
-## Gyors összefoglaló
+## ⚠️ Render ingyenes tier korlátai
 
-| | Szolgáltatás | URL |
-|---|---|---|
-| **Frontend** | Vercel | `https://testflow-XYZ.vercel.app` |
-| **Backend API** | Fly.io | `https://testflow-api.fly.dev` |
-| **Health check** | Fly.io | `https://testflow-api.fly.dev/health` |
-| **SQLite volume** | Fly.io | `/data/testflow.db` |
+| | Ingyenes |
+|---|---|
+| Web Service | Leáll 15 perc inaktivitás után (első kérés ~30mp) |
+| PostgreSQL | **90 napig ingyenes**, utána törlődik! |
 
----
-
-## Hasznos parancsok
-
-```bash
-# Backend logok
-fly logs --app testflow-api
-
-# Backend újraindítás
-fly machine restart --app testflow-api
-
-# SQLite fájl állapota
-fly ssh console --app testflow-api -C "ls -lh /data/"
-
-# Volume lista
-fly volumes list --app testflow-api
-```
+Ha hosszú távon használjátok: Render Starter plan (~7$/hó) ajánlott.
 
 ---
 
-## Helyi fejlesztés (Docker Compose)
+## Helyi fejlesztés
 
 ```bash
 docker-compose up --build
-# Frontend: http://localhost
-# API:      http://localhost/api/suites
+# http://localhost
 ```
+
+A `docker-compose.yml` helyi fejlesztéshez megmarad,
+de SQLite-ot használ – production PostgreSQL-t Render kezeli.
