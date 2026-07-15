@@ -1,14 +1,14 @@
 /* ====================================================================
    TF.Storage – REST API alapú adatkezelés
-   Az összes adat a /api/suites végponton keresztül érhető el.
-   A File System Access API-t ez a modul teljesen kiváltja.
+   API URL: window.TF_API_URL (Vercel env) vagy relatív /api (helyi)
 ==================================================================== */
 window.TF = window.TF || {};
 
 TF.Storage = (() => {
-  const BASE = '/api';
+  // Vercel build-kor a vercel.json env blokk beállítja a window.TF_API_URL-t
+  // Ha nem létezik, feltételezzük hogy ugyanazon a domainen fut (nginx proxy)
+  const BASE = (window.TF_API_URL || '') + '/api';
 
-  /* ── segéd: fetch + JSON + hibajelzés ── */
   async function _fetch(path, options = {}) {
     const res = await fetch(BASE + path, {
       headers: { 'Content-Type': 'application/json', ...options.headers },
@@ -22,7 +22,6 @@ TF.Storage = (() => {
     return res.json();
   }
 
-  /* ── In-memory cache (gyors helyi olvasás között) ── */
   let _cache = null;
 
   async function _ensureCache() {
@@ -32,31 +31,18 @@ TF.Storage = (() => {
 
   function _invalidate() { _cache = null; }
 
-  /* ── Publikus API (megegyezik a régi TF.Storage interfészével) ── */
-
   function isSupported() { return true; }
-  function isReady()     { return true; }  // REST mindig kész
+  function isReady()     { return true; }
   function getFileName() { return 'REST API'; }
-
-  // Fájlválasztó helyett az API ellenőrzése
-  async function init() {
-    try {
-      await _fetch('/suites');
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
   async function getSuites() {
     const suites = await _ensureCache();
-    return suites ?? [];
+    return (suites ?? []).map(_normalize);
   }
 
   async function getSuite(id) {
-    // Gyors cache-ből
     if (_cache) {
-      const found = _cache.find(s => s.id === id || s.Id === id);
+      const found = _cache.find(s => (s.id ?? s.Id) === id);
       if (found) return _normalize(found);
     }
     const suite = await _fetch(`/suites/${id}`);
@@ -73,8 +59,7 @@ TF.Storage = (() => {
   }
 
   async function saveSuites(suites) {
-    // Átrendezés
-    const ids = suites.map(s => s.id || s.Id);
+    const ids = suites.map(s => s.id ?? s.Id);
     await _fetch('/suites/reorder', {
       method: 'POST',
       body: JSON.stringify({ ids }),
@@ -91,7 +76,7 @@ TF.Storage = (() => {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   }
 
-  /* ── Normalizáció: API PascalCase → frontend camelCase ── */
+  // API PascalCase → frontend camelCase
   function _normalize(s) {
     return {
       id:          s.id          ?? s.Id          ?? '',
@@ -109,19 +94,19 @@ TF.Storage = (() => {
         actualResult:   tc.actualResult   ?? tc.ActualResult   ?? '',
         evaluation:     tc.evaluation     ?? tc.Evaluation     ?? '',
         attachments: (tc.attachments ?? tc.Attachments ?? []).map(a => ({
-          dataUrl:  a.dataUrl  ?? a.DataUrl  ?? '',
-          name:     a.fileName ?? a.FileName ?? '',
-          sizePx:   a.sizePx   ?? a.SizePx   ?? '',
-          sizeKb:   a.sizeKb   ?? a.SizeKb   ?? 0,
+          dataUrl: a.dataUrl  ?? a.DataUrl  ?? '',
+          name:    a.fileName ?? a.FileName ?? '',
+          sizePx:  a.sizePx   ?? a.SizePx   ?? '',
+          sizeKb:  a.sizeKb   ?? a.SizeKb   ?? 0,
         })),
       })),
     };
   }
 
-  /* ── Denormalizáció: frontend camelCase → API PascalCase ── */
+  // frontend camelCase → API PascalCase
   function _denormalize(s) {
     return {
-      id:          s.id || s.Id,
+      id:          s.id ?? s.Id,
       name:        s.name        ?? '',
       notes:       s.notes       ?? '',
       status:      s.status      ?? '',
@@ -149,9 +134,8 @@ TF.Storage = (() => {
   }
 
   return {
-    isSupported, isReady, getFileName, init,
+    isSupported, isReady, getFileName,
     getSuites, getSuite, upsertSuite, saveSuites, deleteSuite, genId,
-    // Kompatibilitás: régi kód használja ezeket
     createNew:    async () => true,
     openExisting: async () => true,
   };
