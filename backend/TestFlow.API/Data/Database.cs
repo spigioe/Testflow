@@ -45,18 +45,21 @@ public class Database
 
     // postgres://user:pass@host:port/db → Host=...;Username=...;Password=...
     private static string ConvertPostgresUrl(string url)
-    {
-        if (!url.StartsWith("postgres://") && !url.StartsWith("postgresql://"))
-            return url; // Már Npgsql formátum
+{
+    if (!url.StartsWith("postgres://") && !url.StartsWith("postgresql://"))
+        return url;
 
-        var uri  = new Uri(url);
-        var user = uri.UserInfo.Split(':');
-        var db   = uri.AbsolutePath.TrimStart('/');
+    var uri  = new Uri(url);
+    var user = uri.UserInfo.Split(':');
+    var db   = uri.AbsolutePath.TrimStart('/');
 
-        return $"Host={uri.Host};Port={uri.Port};Database={db};" +
-               $"Username={user[0]};Password={user[1]};" +
-               $"SSL Mode=Require;Trust Server Certificate=true;";
-    }
+    // Port csak akkor kerül bele, ha ténylegesen meg van adva
+    var portPart = uri.Port > 0 ? $"Port={uri.Port};" : "";
+
+    return $"Host={uri.Host};{portPart}Database={db};" +
+           $"Username={user[0]};Password={user[1]};" +
+           $"SSL Mode=Require;Trust Server Certificate=true;";
+}
 
     private const string Schema = """
         CREATE TABLE IF NOT EXISTS suites (
