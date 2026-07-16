@@ -27,12 +27,13 @@ if (builder.Environment.IsDevelopment())
 
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
     p.WithOrigins(allowedOrigins)
+     .AllowAnyOrigin()
      .AllowAnyMethod()
      .AllowAnyHeader()));
 
 var app = builder.Build();
 
-app.UseCors();
+app.UseCors("AllowAll");
 app.MapControllers();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok", version = "1.0.0" }));
