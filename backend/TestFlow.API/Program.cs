@@ -25,11 +25,10 @@ if (!string.IsNullOrWhiteSpace(envOrigin))
 if (builder.Environment.IsDevelopment())
     allowedOrigins = ["http://localhost", "http://localhost:3000", "http://localhost:5173"];
 
-builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.WithOrigins(allowedOrigins)
-     .AllowAnyOrigin()
-     .AllowAnyMethod()
-     .AllowAnyHeader()));
+builder.Services.AddCors(o => o.AddPolicy("AllowAll", p => p
+    .AllowAnyOrigin()
+    .AllowAnyMethod()
+    .AllowAnyHeader()));
 
 var app = builder.Build();
 
